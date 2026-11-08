@@ -6,7 +6,7 @@ import {
   Bill, Item, SAMPLE_ITEMS, SAMPLE_TAX, amountFor, billUrl, computeShares, decodeBill, encodeBill, round2,
 } from "./bill";
 import {
-  PaidInfo, explorerAddr, explorerTx, findPayment, getProvider, isAddress, payFromBrowser, short, solUsdRate, solanaPayUrl,
+  PaidInfo, explorerAddr, scanPayee, explorerTx, findPayment, getProvider, isAddress, payFromBrowser, short, solUsdRate, solanaPayUrl,
 } from "./chain";
 import { readReceipt, splitWithAI } from "./ai";
 
@@ -20,6 +20,7 @@ export default function App() {
     return () => window.removeEventListener("hashchange", f);
   }, []);
   const code = hash.startsWith("#/b/") ? hash.slice(4) : null;
+  const pay = hash.startsWith("#/p/") ? decodePay(hash.slice(4)) : null;
   const bill = useMemo(() => (code ? decodeBill(code) : null), [code]);
 
   return (
@@ -34,8 +35,9 @@ export default function App() {
         </a>
         <span className="pill">Solana Devnet</span>
       </header>
+      {hash.startsWith("#/p/") && !pay && <div className="error">This payment link is broken.</div>}
       {code && !bill && <div className="error">This bill link is broken. <a href="#/">Start a new one</a></div>}
-      {bill ? <BillView bill={bill} /> : <CreateView />}
+      {pay ? <PayView pay={pay} /> : bill ? <BillView bill={bill} /> : <CreateView />}
       <footer>
         No server, no database: the bill lives in the link and payments are read straight from Solana. · Built for the MLH Solana Hackathon
       </footer>
@@ -256,6 +258,7 @@ function CreateView() {
 /* ------------------------------------------------------------------ */
 
 function BillView({ bill }: { bill: Bill }) {
+  const [qrMode, setQrMode] = useState<"camera" | "solanapay">("camera");
   const [paid, setPaid] = useState<Record<string, PaidInfo>>({});
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -266,19 +269,41 @@ function BillView({ bill }: { bill: Bill }) {
   const collected = round2(payers.filter((p) => paid[p.ref]).reduce((a, p) => a + p.usd, 0));
   const owed = round2(payers.reduce((a, p) => a + p.usd, 0));
 
+  const [rpcErr, setRpcErr] = useState<string | null>(null);
   useEffect(() => {
-    let stop = false;
+    let stop = false, running = false;
+    const cur = bill.cur ?? "SOL";
     async function poll() {
-      for (const p of payers) {
-        if (stop || paid[p.ref]) continue;
-        try {
-          const r = await findPayment(p.ref, bill.payee, amountFor(bill, p.usd).base, bill.cur ?? "SOL");
-          if (r && !stop) setPaid((x) => ({ ...x, [p.ref]: r }));
-        } catch { /* rpc hiccup, retry next tick */ }
-      }
+      if (running) return; running = true;
+      try {
+        const found: Record<string, PaidInfo> = {};
+        // 1) Solana Pay reference keys (the normal path)
+        for (const p of payers) {
+          if (stop || paid[p.ref]) continue;
+          const r = await findPayment(p.ref, bill.payee, amountFor(bill, p.usd).base, cur);
+          if (r) found[p.ref] = r;
+        }
+        // 2) Fallback: match the host's recent incoming payments by reference, memo or exact amount
+        const unpaid = payers.filter((p) => !paid[p.ref] && !found[p.ref]);
+        if (unpaid.length && !stop) {
+          const claimed = new Set([...Object.values(paid), ...Object.values(found)].map((x) => x.sig));
+          const incoming = (await scanPayee(bill.payee, cur, Math.floor(bill.created / 1000) - 120)).filter((i) => !claimed.has(i.sig));
+          const take = (p: Bill["people"][number], pred: (i: (typeof incoming)[number]) => boolean) => {
+            const i = incoming.find((x) => !claimed.has(x.sig) && pred(x));
+            if (i) { claimed.add(i.sig); found[p.ref] = { sig: i.sig, from: i.from, time: i.time }; }
+          };
+          for (const p of unpaid) take(p, (i) => i.keys.has(p.ref));
+          for (const p of unpaid) if (!found[p.ref]) take(p, (i) => i.memo.toLowerCase().includes(`tab: ${p.name.toLowerCase()}`));
+          for (const p of unpaid) if (!found[p.ref]) { const b = amountFor(bill, p.usd).base; take(p, (i) => Math.abs(i.base - b) <= b * 0.005); }
+        }
+        if (!stop && Object.keys(found).length) setPaid((x) => ({ ...x, ...found }));
+        if (!stop) setRpcErr(null);
+      } catch (e: any) {
+        if (!stop) setRpcErr(/429|Too many/i.test(String(e?.message)) ? "Solana devnet is rate-limiting this page; retrying…" : `Can't reach Solana right now (${String(e?.message ?? e).slice(0, 80)}); retrying…`);
+      } finally { running = false; }
     }
     poll();
-    const t = setInterval(poll, 2000);
+    const t = setInterval(poll, 3000);
     return () => { stop = true; clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bill, paidCount]);
@@ -314,13 +339,19 @@ function BillView({ bill }: { bill: Bill }) {
         </div>
       </section>
 
+      <div className="qr-toggle">
+        <span className="muted small">QR codes:</span>
+        <button className={`chip ${qrMode === "camera" ? "on" : ""}`} onClick={() => setQrMode("camera")}>📷 Scan with phone camera (opens Phantom)</button>
+        <button className={`chip ${qrMode === "solanapay" ? "on" : ""}`} onClick={() => setQrMode("solanapay")}>Solana Pay (scan inside a wallet)</button>
+      </div>
       <section className="people-grid">
         {payers.map((p) => (
-          <PersonCard key={p.ref} bill={bill} p={p} paid={paid[p.ref]} onPaid={(info) => setPaid((x) => ({ ...x, [p.ref]: info }))} onError={setErr} />
+          <PersonCard key={p.ref} qrMode={qrMode} bill={bill} p={p} paid={paid[p.ref]} onPaid={(info) => setPaid((x) => ({ ...x, [p.ref]: info }))} onError={setErr} />
         ))}
       </section>
 
       {err && <div className="error" onClick={() => setErr(null)}>⚠️ {err}</div>}
+      {rpcErr && <div className="error">⏳ {rpcErr}</div>}
       <p className="muted small center">
         Scan a QR code with Phantom (or any Solana Pay wallet) to pay that person's share. Each QR carries a unique reference key,
         so this page finds the payment on-chain by itself. Nobody has to say "I sent it".
@@ -332,18 +363,21 @@ function BillView({ bill }: { bill: Bill }) {
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const hasWallet = !!getProvider();
 
-function PersonCard({ bill, p, paid, onPaid, onError }: {
-  bill: Bill; p: Bill["people"][number]; paid?: PaidInfo; onPaid: (i: PaidInfo) => void; onError: (e: string) => void;
+function PersonCard({ bill, p, paid, onPaid, onError, qrMode }: {
+  qrMode: "camera" | "solanapay"; bill: Bill; p: Bill["people"][number]; paid?: PaidInfo; onPaid: (i: PaidInfo) => void; onError: (e: string) => void;
 }) {
   const [qr, setQr] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const amt = amountFor(bill, p.usd);
   const mine = bill.items.filter((it) => it.who.length === 0 || it.who.includes(bill.people.indexOf(p)));
   const memo = `Tab: ${p.name}`.slice(0, 40);
-  const url = solanaPayUrl({ payee: bill.payee, amount: amt.ui, cur: bill.cur, ref: p.ref, label: `Tab: ${p.name}`.slice(0, 32), memo });
+  const spUrl = solanaPayUrl({ payee: bill.payee, amount: amt.ui, cur: bill.cur, ref: p.ref, label: `Tab: ${p.name}`.slice(0, 32), memo });
+  const payPage = `${location.origin}${location.pathname}#/p/${encodePay({ p: bill.payee, a: amt.base, r: p.ref, c: bill.cur ?? "SOL", n: p.name, t: bill.title, u: p.usd, l: amt.label })}`;
+  const camUrl = `https://phantom.app/ul/browse/${encodeURIComponent(payPage)}?ref=${encodeURIComponent(location.origin)}`;
+  const url = qrMode === "camera" ? camUrl : spUrl;
 
   useEffect(() => {
-    QRCode.toDataURL(url, { margin: 1, width: 360, color: { dark: "#0b0d12", light: "#ffffff" } }).then(setQr);
+    QRCode.toDataURL(url, { margin: 1, width: 360, errorCorrectionLevel: "L", color: { dark: "#0b0d12", light: "#ffffff" } }).then(setQr);
   }, [url]);
 
   async function payHere() {
@@ -393,5 +427,61 @@ function PersonCard({ bill, p, paid, onPaid, onError }: {
         </ul>
       </details>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* One person's pay page (opened by scanning the camera QR)           */
+/* ------------------------------------------------------------------ */
+
+interface PayLink { p: string; a: number; r: string; c: "SOL" | "USDC"; n: string; t: string; u: number; l: string }
+function encodePay(x: PayLink) {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(x)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodePay(code: string): PayLink | null {
+  try {
+    const pad = code.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((code.length + 3) % 4);
+    const x = JSON.parse(decodeURIComponent(escape(atob(pad))));
+    return x && isAddress(x.p) && x.a > 0 ? x : null;
+  } catch { return null; }
+}
+
+function PayView({ pay }: { pay: PayLink }) {
+  const [busy, setBusy] = useState(false);
+  const [sig, setSig] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const wallet = !!getProvider();
+  async function go() {
+    setBusy(true); setErr(null);
+    try {
+      const s = await payFromBrowser({ payee: pay.p, base: pay.a, ref: pay.r, cur: pay.c, memo: `Tab: ${pay.n}` });
+      setSig(s);
+      confetti({ particleCount: 120, spread: 80, origin: { y: 0.4 } });
+    } catch (e: any) { setErr(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  }
+  return (
+    <main className="payview">
+      <section className="card pay-card">
+        <div className="muted small">TAB · {pay.t}</div>
+        <h2 className="title">Hi {pay.n} 👋</h2>
+        <p className="muted">Your share of the bill</p>
+        <div className="pay-amt">{usd(pay.u)}</div>
+        <div className="muted">{pay.l} · to <a className="mono" href={explorerAddr(pay.p)} target="_blank">{short(pay.p)}</a></div>
+        {sig ? (
+          <div className="paid-box">
+            <div className="check">✓</div>
+            <div><b>Paid!</b> It's already showing on the table's screen.</div>
+            <a href={explorerTx(sig)} target="_blank">View transaction ↗</a>
+          </div>
+        ) : wallet ? (
+          <button className="primary big" onClick={go} disabled={busy}>{busy ? "Waiting for approval…" : `Pay ${usd(pay.u)}`}</button>
+        ) : (
+          <a className="btn-phantom big-link" href={`https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`}>Open in Phantom to pay</a>
+        )}
+        {err && <div className="error" onClick={() => setErr(null)}>⚠️ {err}</div>}
+        <p className="muted small">Settles on Solana in about a second · fee under $0.001</p>
+      </section>
+    </main>
   );
 }

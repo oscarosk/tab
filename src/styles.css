@@ -95,3 +95,8 @@ footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px
 .cur-row { align-items: center; margin-top: 4px; }
 .btn-phantom { display: block; text-align: center; padding: 12px; border-radius: 12px; background: #ab9ff2; color: #1b1340; font-weight: 700; }
 .btn-phantom:hover { text-decoration: none; filter: brightness(1.05); }
+.qr-toggle { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.payview { display: grid; place-items: center; padding: 20px 0 40px; }
+.pay-card { width: min(460px, 100%); display: grid; gap: 10px; text-align: center; }
+.pay-amt { font-size: 56px; font-weight: 800; letter-spacing: -1px; }
+.big-link { padding: 16px; font-size: 16px; margin-top: 10px; }

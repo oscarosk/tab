@@ -104,6 +104,46 @@ export async function findPayment(ref: string, payee: string, base: number, cur:
   return null;
 }
 
+export interface Incoming { sig: string; base: number; memo: string; keys: Set<string>; from: string; time: number | null }
+const parsedCache = new Map<string, Incoming | null>();
+
+/** Fallback: look at the host's recent incoming payments (in case a wallet dropped the reference key). */
+export async function scanPayee(payee: string, cur: Cur, sinceSec: number): Promise<Incoming[]> {
+  const watch = cur === "USDC" ? getAssociatedTokenAddressSync(USDC_MINT, new PublicKey(payee), true) : new PublicKey(payee);
+  const target = watch.toBase58();
+  const sigs = await connection.getSignaturesForAddress(watch, { limit: 25 }, "confirmed");
+  const out: Incoming[] = [];
+  for (const s of sigs) {
+    if (s.err || (s.blockTime && s.blockTime < sinceSec)) continue;
+    if (!parsedCache.has(s.signature)) {
+      const tx = await connection.getParsedTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" });
+      let inc: Incoming | null = null;
+      if (tx && !tx.meta?.err) {
+        const ixs: any[] = [
+          ...(tx.transaction.message.instructions as any[]),
+          ...((tx.meta?.innerInstructions ?? []).flatMap((x) => x.instructions) as any[]),
+        ];
+        let base = 0, from = "", memo = "";
+        for (const ix of ixs) {
+          if (ix.program === "spl-memo" && typeof ix.parsed === "string") memo += ix.parsed;
+          const t = ix.parsed?.type, info = ix.parsed?.info;
+          if (!info || info.destination !== target) continue;
+          if (cur === "SOL" && ix.program === "system" && t === "transfer") { base += Number(info.lamports); from = info.source; }
+          if (cur === "USDC" && ix.program === "spl-token" && (t === "transfer" || t === "transferChecked")) {
+            base += Number(info.tokenAmount?.amount ?? info.amount); from = info.authority ?? info.source;
+          }
+        }
+        const keys = new Set(tx.transaction.message.accountKeys.map((k: any) => (k.pubkey ?? k).toString()));
+        if (base > 0) inc = { sig: s.signature, base, memo, keys, from, time: s.blockTime ?? null };
+      }
+      parsedCache.set(s.signature, inc);
+    }
+    const inc = parsedCache.get(s.signature);
+    if (inc) out.push(inc);
+  }
+  return out;
+}
+
 export async function solUsdRate(): Promise<number> {
   try {
     const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
