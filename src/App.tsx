@@ -341,7 +341,7 @@ function BillView({ bill }: { bill: Bill }) {
 
       <div className="qr-toggle">
         <span className="muted small">QR codes:</span>
-        <button className={`chip ${qrMode === "camera" ? "on" : ""}`} onClick={() => setQrMode("camera")}>📷 Scan with phone camera (opens Phantom)</button>
+        <button className={`chip ${qrMode === "camera" ? "on" : ""}`} onClick={() => setQrMode("camera")}>📷 Scan with phone camera</button>
         <button className={`chip ${qrMode === "solanapay" ? "on" : ""}`} onClick={() => setQrMode("solanapay")}>Solana Pay (scan inside a wallet)</button>
       </div>
       <section className="people-grid">
@@ -374,7 +374,9 @@ function PersonCard({ bill, p, paid, onPaid, onError, qrMode }: {
   const spUrl = solanaPayUrl({ payee: bill.payee, amount: amt.ui, cur: bill.cur, ref: p.ref, label: `Tab: ${p.name}`.slice(0, 32), memo });
   const payPage = `${location.origin}${location.pathname}#/p/${encodePay({ p: bill.payee, a: amt.base, r: p.ref, c: bill.cur ?? "SOL", n: p.name, t: bill.title, u: p.usd, l: amt.label })}`;
   const camUrl = `https://phantom.app/ul/browse/${encodeURIComponent(payPage)}?ref=${encodeURIComponent(location.origin)}`;
-  const url = qrMode === "camera" ? camUrl : spUrl;
+  // Camera QR → our own pay page (opens in the phone's normal browser, which then hands off to Phantom).
+  void camUrl;
+  const url = qrMode === "camera" ? payPage : spUrl;
 
   useEffect(() => {
     QRCode.toDataURL(url, { margin: 1, width: 360, errorCorrectionLevel: "L", color: { dark: "#0b0d12", light: "#ffffff" } }).then(setQr);
@@ -450,6 +452,7 @@ function PayView({ pay }: { pay: PayLink }) {
   const [busy, setBusy] = useState(false);
   const [sig, setSig] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const wallet = !!getProvider();
   async function go() {
     setBusy(true); setErr(null);
@@ -477,7 +480,12 @@ function PayView({ pay }: { pay: PayLink }) {
         ) : wallet ? (
           <button className="primary big" onClick={go} disabled={busy}>{busy ? "Waiting for approval…" : `Pay ${usd(pay.u)}`}</button>
         ) : (
-          <a className="btn-phantom big-link" href={`https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`}>Open in Phantom to pay</a>
+          <>
+            <a className="btn-phantom big-link" href={`https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`}>Open in Phantom to pay</a>
+            <button className="ghost wide" onClick={async () => { try { await navigator.clipboard.writeText(location.href); setErr(null); setCopied(true); } catch { setErr("Long-press the address bar to copy this page's link."); } }}>
+              {copied ? "Copied! Paste it in Phantom's browser (🔍 tab)" : "Or copy link to open in Phantom's browser"}
+            </button>
+          </>
         )}
         {err && <div className="error" onClick={() => setErr(null)}>⚠️ {err}</div>}
         <p className="muted small">Settles on Solana in about a second · fee under $0.001</p>
