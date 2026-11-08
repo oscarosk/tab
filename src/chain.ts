@@ -70,9 +70,28 @@ export async function payFromBrowser(o: { payee: string; base: number; ref: stri
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
   const tx = new Transaction({ feePayer: payer, blockhash, lastValidBlockHeight }).add(...ixs);
   const signed = await provider.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize());
-  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-  return sig;
+  const raw = signed.serialize();
+  // The wallet already simulated it before signing. Skipping preflight avoids "Blockhash not found"
+  // when the public devnet RPC is a few slots behind; we rebroadcast until it confirms or expires.
+  const sig = await connection.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 5 });
+  let done = false;
+  const rebroadcast = (async () => {
+    while (!done) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (!done) connection.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
+    }
+  })();
+  try {
+    const conf = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    if (conf.value.err) throw new Error("The payment failed on-chain: " + JSON.stringify(conf.value.err) + ". Check the wallet has enough devnet SOL/USDC.");
+    return sig;
+  } catch (e: any) {
+    if (/block height exceeded|expired/i.test(String(e?.message))) throw new Error("The payment expired before it went through. Tap Pay again and approve within about a minute.");
+    throw e;
+  } finally {
+    done = true;
+    void rebroadcast;
+  }
 }
 
 export interface PaidInfo { sig: string; from: string; time: number | null }
