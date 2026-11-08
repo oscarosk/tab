@@ -320,8 +320,30 @@ function BillView({ bill }: { bill: Bill }) {
     setCopied(true); setTimeout(() => setCopied(false), 1500);
   }
 
+  const times = payers.map((p) => paid[p.ref]?.time).filter((t): t is number => !!t);
+  const lastPaid = times.length ? Math.max(...times) : null;
+  const mins = lastPaid ? Math.max(1, Math.round((lastPaid * 1000 - bill.created) / 60000)) : null;
+
   return (
     <main className="board">
+      {allPaid && (
+        <section className="card settled">
+          <div className="settled-check">✓</div>
+          <div className="settled-body">
+            <div className="settled-title">Tab settled! 🎉</div>
+            <div className="settled-sub">
+              {usd(collected)} collected from {payers.length} friend{payers.length > 1 ? "s" : ""}
+              {mins ? ` in ${mins} min` : ""} · network fees under $0.01 total · no IOUs
+            </div>
+            <div className="settled-list">
+              {payers.map((p) => (
+                <a key={p.ref} href={explorerTx(paid[p.ref].sig)} target="_blank">✅ {p.name} · {usd(p.usd)} ↗</a>
+              ))}
+            </div>
+          </div>
+          <a className="btn-new" href="#/">+ Start a new tab</a>
+        </section>
+      )}
       <section className="card hero">
         <div>
           <div className="muted small">TAB</div>
@@ -353,8 +375,8 @@ function BillView({ bill }: { bill: Bill }) {
       {err && <div className="error" onClick={() => setErr(null)}>⚠️ {err}</div>}
       {rpcErr && <div className="error">⏳ {rpcErr}</div>}
       <p className="muted small center">
-        Scan a QR code with Phantom (or any Solana Pay wallet) to pay that person's share. Each QR carries a unique reference key,
-        so this page finds the payment on-chain by itself. Nobody has to say "I sent it".
+        Each friend scans their QR with their phone camera (or opens the group-chat link) and pays with Phantom. Every payment carries
+        a unique Solana Pay reference key, so this page finds it on-chain by itself. Nobody has to say "I sent it".
       </p>
     </main>
   );

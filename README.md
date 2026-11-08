@@ -6,19 +6,28 @@
 
 1. **Snap the receipt.** AI reads every line item, the tax and the tip.
 2. **Say who had what** in plain English: *"Sam had the burger and both beers, I had the pizza, fries were shared."* AI assigns the items, and tax + tip are split fairly in proportion to what each person ordered.
-3. **Everyone scans their own QR code** with a phone wallet and pays their exact share. It settles in about a second, for a fraction of a cent.
-4. **A live board ticks each person off** as their payment lands on-chain. No "I sent it, I promise."
+3. **Everyone scans their own QR code** with their phone camera (or taps the link in the group chat), the page opens in Phantom, and they pay their exact share. It settles in about a second, for a fraction of a cent.
+4. **A live board ticks each person off** as their payment lands on-chain, then shows **"Tab settled! 🎉"** with a link to every transaction. No "I sent it, I promise."
 
 > Built for the MLH Solana Hackathon (Nov 6–8, 2026) · AI Track · Runs on Solana devnet
 
-**Live demo:** `<your-vercel-url>` · **Video:** `<your-video-url>`
+**Live demo:** https://tab-lime.vercel.app · **Video:** `<video-link>`
 
 ---
+
+## ✅ Verified on Solana devnet
+
+These are real payments from our end-to-end test tonight (phone wallet → host, browser wallet → host), detected automatically by the board:
+
+- Sam paid **$33.83 (≈0.378 SOL)** from a phone: [transaction on Solana Explorer](https://explorer.solana.com/tx/2HBr3KSgKQsHrToREFKARWeo1LkmuGdaT3pLMj5t6GUhfTLx5Q9vgVvNCrvD5nXXDQLNEGMG1CTHNbaEe1e8PwTC?cluster=devnet)
+- Alex paid **$8.00 (≈0.089 SOL)**: [transaction on Solana Explorer](https://explorer.solana.com/tx/2E6FCrFSU74zNG4FD5MMpoH9GCqxphu6HRTqzpB9doFE11yhum9CG2p9xsGG42s9o4C5eNVVvS7EV8HTQE8g8Jkx?cluster=devnet)
+- Host wallet: [8QmC…iPtB on Explorer](https://explorer.solana.com/address/8QmCyQeTtTdNWtNizLnFYgHvEPE44jyAhXLTEmW7iPtB?cluster=devnet)
 
 ## Why Solana, and why it can't just be a web2 app
 
 - **Speed:** a friend scans, and the host's screen updates about a second later, while everyone's still at the table. A bank transfer takes days; a card payment can't be split at all.
 - **Cost:** a $8 lemonade share costs ~$0.0005 to send. On card rails, that same small payment loses ~3% plus fixed fees, which kills micro-splits.
+- **Payment detection that can't be faked.** The board matches each payment by its Solana Pay reference key, and falls back to the host's incoming transfers (memo + exact amount) for wallets that drop the key.
 - **No backend at all.** Each person's QR is a **Solana Pay** transfer request with a unique **reference key**. The board finds each payment by querying the chain for that key (`getSignaturesForAddress`), then verifies the recipient and amount. The bill itself lives in the link. The blockchain is the shared ledger: there's no server, no database, nothing to hack, and nobody can fake "I paid."
 - **Works with any Solana Pay wallet** (Phantom, Solflare, …) and with no app to install. Friends just scan, or open the group-chat link on their phone and tap **Pay with Phantom**.
 - **SOL or USDC.** Pay in SOL, or in USDC for exact dollars (SPL `transferChecked`, verified on-chain the same way).
