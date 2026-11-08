@@ -11,7 +11,7 @@
 
 > Built for the MLH Solana Hackathon (Nov 6–8, 2026) · AI Track · Runs on Solana devnet
 
-**Live demo:** https://tab-lime.vercel.app · **Video:** `<video-link>`
+**Live demo:** https://tab-lime.vercel.app · **Video:** https://youtu.be/Kh0Thwm1_74
 
 ---
 
